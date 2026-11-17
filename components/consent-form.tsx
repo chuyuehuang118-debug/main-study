@@ -11,6 +11,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { apiUrl, assetUrl } from '@/lib/runtime-url';
 
 type Language = 'zh' | 'en';
 
@@ -123,7 +124,11 @@ export function ConsentForm({
   const createSignedPdf = async (signedAt: Date) => {
     const { PDFDocument, StandardFonts, rgb } = await import('pdf-lib');
     const sourceResponse = await fetch(
-      language === 'zh' ? '/consent/consent-zh.pdf' : '/consent/consent-en.pdf',
+      assetUrl(
+        language === 'zh'
+          ? '/consent/consent-zh.pdf'
+          : '/consent/consent-en.pdf',
+      ),
     );
     if (!sourceResponse.ok) throw new Error('Unable to load consent form');
     const source = await PDFDocument.load(await sourceResponse.arrayBuffer());
@@ -217,7 +222,7 @@ export function ConsentForm({
       form.append('city', city);
       form.append('language', language);
       form.append('signedAt', signedAt.toISOString());
-      const response = await fetch('/api/consent', {
+      const response = await fetch(apiUrl('/api/consent'), {
         method: 'POST',
         body: form,
       });

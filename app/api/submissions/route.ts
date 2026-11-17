@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { responses, submissions } from '@/db/schema';
+import { questionnaireCorsPreflight, withQuestionnaireCors } from '@/lib/cors';
 
 export const runtime = 'edge';
 
@@ -32,7 +33,7 @@ type IncomingSubmission = {
   responses?: IncomingResponse[];
 };
 
-export async function POST(request: NextRequest) {
+async function handlePost(request: NextRequest) {
   try {
     const body = (await request.json()) as IncomingSubmission;
     if (
@@ -135,4 +136,12 @@ export async function POST(request: NextRequest) {
       { status: 500 },
     );
   }
+}
+
+export async function POST(request: NextRequest) {
+  return withQuestionnaireCors(request, await handlePost(request));
+}
+
+export function OPTIONS(request: NextRequest) {
+  return questionnaireCorsPreflight(request);
 }

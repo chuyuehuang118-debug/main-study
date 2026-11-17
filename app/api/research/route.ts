@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { asc, desc, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { consentRecords, responses, submissions } from '@/db/schema';
+import { questionnaireCorsPreflight, withQuestionnaireCors } from '@/lib/cors';
 
 export const runtime = 'edge';
 
@@ -28,7 +29,7 @@ function csvCell(value: unknown) {
   return `"${text.replaceAll('"', '""')}"`;
 }
 
-export async function GET(request: NextRequest) {
+async function handleGet(request: NextRequest) {
   if (!authorised(request))
     return NextResponse.json({ error: 'Unauthorised' }, { status: 401 });
   const db = getDb();
@@ -202,4 +203,12 @@ export async function GET(request: NextRequest) {
       signedConsents: consentRows.length,
     },
   });
+}
+
+export async function GET(request: NextRequest) {
+  return withQuestionnaireCors(request, await handleGet(request));
+}
+
+export function OPTIONS(request: NextRequest) {
+  return questionnaireCorsPreflight(request);
 }

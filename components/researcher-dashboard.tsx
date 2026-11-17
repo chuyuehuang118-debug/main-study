@@ -20,6 +20,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { apiUrl } from '@/lib/runtime-url';
 
 type Metrics = {
   count: number;
@@ -86,7 +87,7 @@ export function ResearcherDashboard() {
     setLoading(true);
     setError('');
     try {
-      const response = await fetch('/api/research', {
+      const response = await fetch(apiUrl('/api/research'), {
         headers: { Authorization: `Bearer ${passcode}` },
       });
       if (response.status === 401)
@@ -102,14 +103,17 @@ export function ResearcherDashboard() {
   };
 
   const openDetail = async (id: string) => {
-    const response = await fetch(`/api/research?id=${encodeURIComponent(id)}`, {
-      headers: { Authorization: `Bearer ${passcode}` },
-    });
+    const response = await fetch(
+      apiUrl(`/api/research?id=${encodeURIComponent(id)}`),
+      {
+        headers: { Authorization: `Bearer ${passcode}` },
+      },
+    );
     if (response.ok) setDetail(await response.json());
   };
 
   const exportCsv = async () => {
-    const response = await fetch('/api/research?format=csv', {
+    const response = await fetch(apiUrl('/api/research?format=csv'), {
       headers: { Authorization: `Bearer ${passcode}` },
     });
     if (!response.ok) return;
@@ -123,7 +127,7 @@ export function ResearcherDashboard() {
 
   const downloadConsent = async (submission: Submission) => {
     const response = await fetch(
-      `/api/consent?submissionId=${encodeURIComponent(submission.id)}`,
+      apiUrl(`/api/consent?submissionId=${encodeURIComponent(submission.id)}`),
       { headers: { Authorization: `Bearer ${passcode}` } },
     );
     if (!response.ok) {

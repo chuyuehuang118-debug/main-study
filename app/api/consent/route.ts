@@ -1,5 +1,6 @@
 import { env } from 'cloudflare:workers';
 import { NextRequest, NextResponse } from 'next/server';
+import { questionnaireCorsPreflight, withQuestionnaireCors } from '@/lib/cors';
 
 export const runtime = 'edge';
 
@@ -22,7 +23,7 @@ function formText(form: FormData, key: string) {
   return typeof value === 'string' ? value : '';
 }
 
-export async function POST(request: NextRequest) {
+async function handlePost(request: NextRequest) {
   try {
     const form = await request.formData();
     const file = form.get('file');
@@ -149,7 +150,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-export async function GET(request: NextRequest) {
+async function handleGet(request: NextRequest) {
   if (!authorised(request))
     return NextResponse.json({ error: 'Unauthorised' }, { status: 401 });
   const submissionId = request.nextUrl.searchParams.get('submissionId');
@@ -184,4 +185,16 @@ export async function GET(request: NextRequest) {
       'Cache-Control': 'private, no-store',
     },
   });
+}
+
+export async function POST(request: NextRequest) {
+  return withQuestionnaireCors(request, await handlePost(request));
+}
+
+export async function GET(request: NextRequest) {
+  return withQuestionnaireCors(request, await handleGet(request));
+}
+
+export function OPTIONS(request: NextRequest) {
+  return questionnaireCorsPreflight(request);
 }

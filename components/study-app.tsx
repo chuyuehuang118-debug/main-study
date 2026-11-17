@@ -20,6 +20,7 @@ import { Input } from '@/components/ui/input';
 import { Progress, ProgressLabel } from '@/components/ui/progress';
 import { Textarea } from '@/components/ui/textarea';
 import { ConsentForm } from '@/components/consent-form';
+import { apiUrl, assetUrl } from '@/lib/runtime-url';
 
 type Answer = {
   value: string;
@@ -342,7 +343,7 @@ const STEPS: Step[] = [
     titleEn: `Roadworks scenario · ${level}`,
     introZh: `请想象您正坐在一辆 ${level} 自动化汽车内。前方车道因施工收窄，车辆需要减速并决定是否变道。`,
     introEn: `Imagine you are travelling in an ${level} automated vehicle. Roadworks narrow the lane ahead, so the vehicle must slow down and decide whether to change lane.`,
-      image: `/scenarios/roadworks-${level.toLowerCase()}.webp`,
+    image: `/scenarios/roadworks-${level.toLowerCase()}.webp`,
     imageAlt: `Roadworks scene for ${level} automation`,
     scenarioCode: 'roadworks',
     automationLevel: level,
@@ -575,7 +576,7 @@ export function StudyApp() {
       }),
     );
     try {
-      const response = await fetch('/api/submissions', {
+      const response = await fetch(apiUrl('/api/submissions'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -701,7 +702,7 @@ export function StudyApp() {
         {step.image && (
           <div className="overflow-hidden rounded-2xl border bg-muted">
             <Image
-              src={step.image}
+              src={assetUrl(step.image)}
               alt={step.imageAlt || ''}
               width={1400}
               height={780}
