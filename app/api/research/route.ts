@@ -29,6 +29,19 @@ function csvCell(value: unknown) {
   return `"${text.replaceAll('"', '""')}"`;
 }
 
+function hesitationReasons(row: {
+  unclear: boolean;
+  firstInteractionMs: number | null;
+  answerChanges: number;
+}) {
+  const reasons: string[] = [];
+  if (row.unclear) reasons.push('unclear');
+  if ((row.firstInteractionMs || 0) >= 30_000)
+    reasons.push('first_action_30s_plus');
+  if (row.answerChanges >= 2) reasons.push('answer_changed_2_plus');
+  return reasons;
+}
+
 async function handleGet(request: NextRequest) {
   if (!authorised(request))
     return NextResponse.json({ error: 'Unauthorised' }, { status: 401 });
@@ -61,7 +74,14 @@ async function handleGet(request: NextRequest) {
           .where(eq(consentRecords.submissionId, detailId))
           .limit(1)
       )[0] || null;
-    return NextResponse.json({ submission, responses: answerRows, consent });
+    return NextResponse.json({
+      submission,
+      responses: answerRows.map((row) => ({
+        ...row,
+        hesitationReasons: hesitationReasons(row),
+      })),
+      consent,
+    });
   }
 
   const submissionRows = await db
@@ -106,6 +126,7 @@ async function handleGet(request: NextRequest) {
       'voice_used',
       'blur_count',
       'hesitation_flag',
+      'hesitation_reasons',
     ];
     const submissionMap = new Map(submissionRows.map((row) => [row.id, row]));
     const lines = responseRows.map((row) => {
@@ -139,6 +160,7 @@ async function handleGet(request: NextRequest) {
         row.voiceUsed,
         row.blurCount,
         row.hesitationFlag,
+        hesitationReasons(row).join('; '),
       ]
         .map(csvCell)
         .join(',');
