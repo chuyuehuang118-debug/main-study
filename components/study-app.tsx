@@ -2,7 +2,7 @@
 
 import Image from 'next/image';
 import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   ArrowRight,
@@ -25,9 +25,12 @@ import { apiUrl, assetUrl } from '@/lib/runtime-url';
 type Answer = {
   value: string;
   unclear: boolean;
+  timeSpentMs: number;
   firstInteractionMs: number | null;
   answerChanges: number;
   voiceUsed: boolean;
+  blurCount: number;
+  timingStartedAt: number | null;
 };
 type Answers = Record<string, Answer>;
 type Question = {
@@ -343,7 +346,7 @@ const STEPS: Step[] = [
     titleEn: `Roadworks scenario · ${level}`,
     introZh: `请想象您正坐在一辆 ${level} 自动化汽车内。前方车道因施工收窄，车辆需要减速并决定是否变道。`,
     introEn: `Imagine you are travelling in an ${level} automated vehicle. Roadworks narrow the lane ahead, so the vehicle must slow down and decide whether to change lane.`,
-    image: `/scenarios/roadworks-${level.toLowerCase()}.webp`,
+    image: `/scenarios/roadworks-${level.toLowerCase()}.png`,
     imageAlt: `Roadworks scene for ${level} automation`,
     scenarioCode: 'roadworks',
     automationLevel: level,
@@ -357,7 +360,7 @@ const STEPS: Step[] = [
       '请查看场景，并想象车辆需要快速识别行人、减速和清楚说明它正在做什么。',
     introEn:
       'Imagine the vehicle must quickly detect the pedestrian, slow down and clearly explain its action.',
-    image: '/scenarios/pedestrian-comparison.webp',
+    image: '/scenarios/pedestrian-comparison.png',
     imageAlt: 'Pedestrian crossing scenario',
     scenarioCode: 'pedestrian',
     questions: scenarioQuestions('pedestrian'),
@@ -370,7 +373,7 @@ const STEPS: Step[] = [
       '请想象暴雨影响传感器和视线。车辆可能减速、请求接管或寻找安全位置停车。',
     introEn:
       'Imagine heavy rain affects sensors and visibility. The vehicle may slow down, request a takeover or find a safe place to stop.',
-    image: '/scenarios/heavy-rain-comparison.webp',
+    image: '/scenarios/heavy-rain-comparison.png',
     imageAlt: 'Heavy rain driving scenario',
     scenarioCode: 'heavy_rain',
     questions: scenarioQuestions('heavy_rain'),
@@ -420,10 +423,49 @@ const STEPS: Step[] = [
 const emptyAnswer = (): Answer => ({
   value: '',
   unclear: false,
+  timeSpentMs: 0,
   firstInteractionMs: null,
   answerChanges: 0,
   voiceUsed: false,
+  blurCount: 0,
+  timingStartedAt: null,
 });
+
+function applyAnswerUpdate(
+  previous: Answer,
+  value: Partial<Answer>,
+  now = Date.now(),
+): Answer {
+  const elapsed =
+    previous.timingStartedAt == null
+      ? 0
+      : Math.max(0, now - previous.timingStartedAt);
+  const timeSpentMs = previous.timeSpentMs + elapsed;
+  const hadAnswer = Boolean(previous.value || previous.unclear);
+  const nextValue = value.value ?? previous.value;
+  const nextUnclear = value.unclear ?? previous.unclear;
+  const responseChanged =
+    hadAnswer &&
+    (nextValue !== previous.value || nextUnclear !== previous.unclear);
+
+  return {
+    ...previous,
+    ...value,
+    timeSpentMs,
+    firstInteractionMs: previous.firstInteractionMs ?? timeSpentMs,
+    answerChanges: previous.answerChanges + (responseChanged ? 1 : 0),
+    timingStartedAt: now,
+  };
+}
+
+function pauseAnswerTimers(source: Answers): Answers {
+  return Object.fromEntries(
+    Object.entries(source).map(([id, answer]) => [
+      id,
+      { ...answer, timingStartedAt: null },
+    ]),
+  );
+}
 
 export function StudyApp() {
   const [started, setStarted] = useState(false);
@@ -442,15 +484,45 @@ export function StudyApp() {
   const [error, setError] = useState('');
   const [submissionId] = useState(() => crypto.randomUUID());
   const [studyStartedAt, setStudyStartedAt] = useState(() => Date.now());
-  const [stepStartedAt, setStepStartedAt] = useState(() => Date.now());
-  const [blurCount, setBlurCount] = useState(0);
+  const visibleQuestionIds = useRef(new Set<string>());
 
   useEffect(() => {
-    const onBlur = () => {
-      if (document.hidden) setBlurCount((count) => count + 1);
+    const onVisibilityChange = () => {
+      const visibleIds = [...visibleQuestionIds.current];
+      if (!visibleIds.length) return;
+      const now = Date.now();
+      setAnswers((current) => {
+        let changed = false;
+        const next = { ...current };
+        for (const questionId of visibleIds) {
+          const previous = current[questionId];
+          if (!previous) continue;
+          if (document.hidden) {
+            const elapsed =
+              previous.timingStartedAt == null
+                ? 0
+                : Math.max(0, now - previous.timingStartedAt);
+            next[questionId] = {
+              ...previous,
+              timeSpentMs:
+                previous.firstInteractionMs == null
+                  ? previous.timeSpentMs + elapsed
+                  : previous.timeSpentMs,
+              blurCount: previous.blurCount + 1,
+              timingStartedAt: null,
+            };
+            changed = true;
+          } else if (previous.timingStartedAt == null) {
+            next[questionId] = { ...previous, timingStartedAt: now };
+            changed = true;
+          }
+        }
+        return changed ? next : current;
+      });
     };
-    document.addEventListener('visibilitychange', onBlur);
-    return () => document.removeEventListener('visibilitychange', onBlur);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () =>
+      document.removeEventListener('visibilitychange', onVisibilityChange);
   }, []);
 
   useEffect(() => {
@@ -486,13 +558,10 @@ export function StudyApp() {
               throw new Error('questionId is required');
             setAnswers((current) => ({
               ...current,
-              [questionId]: {
-                ...(current[questionId] || emptyAnswer()),
-                value: '',
-                unclear: true,
-                firstInteractionMs:
-                  current[questionId]?.firstInteractionMs ?? 0,
-              },
+              [questionId]: applyAnswerUpdate(
+                current[questionId] || emptyAnswer(),
+                { value: '', unclear: true },
+              ),
             }));
             setSaved(false);
             return { questionId, unclear: true };
@@ -529,24 +598,48 @@ export function StudyApp() {
 
   const updateAnswer = (id: string, value: Partial<Answer>) => {
     setSaved(false);
-    setAnswers((current) => {
-      const previous = current[id] || emptyAnswer();
-      const changed =
-        value.value !== undefined &&
-        previous.value !== '' &&
-        value.value !== previous.value;
-      return {
-        ...current,
-        [id]: {
-          ...previous,
-          ...value,
-          firstInteractionMs:
-            previous.firstInteractionMs ?? Date.now() - stepStartedAt,
-          answerChanges: previous.answerChanges + (changed ? 1 : 0),
-        },
-      };
-    });
+    setAnswers((current) => ({
+      ...current,
+      [id]: applyAnswerUpdate(current[id] || emptyAnswer(), value),
+    }));
   };
+
+  const updateQuestionVisibility = useCallback(
+    (id: string, isVisible: boolean) => {
+      const now = Date.now();
+      if (isVisible) {
+        visibleQuestionIds.current.add(id);
+        setAnswers((current) => {
+          const previous = current[id] || emptyAnswer();
+          if (previous.timingStartedAt != null) return current;
+          return {
+            ...current,
+            [id]: { ...previous, timingStartedAt: now },
+          };
+        });
+        return;
+      }
+
+      visibleQuestionIds.current.delete(id);
+      setAnswers((current) => {
+        const previous = current[id];
+        if (!previous || previous.timingStartedAt == null) return current;
+        const elapsed = Math.max(0, now - previous.timingStartedAt);
+        return {
+          ...current,
+          [id]: {
+            ...previous,
+            timeSpentMs:
+              previous.firstInteractionMs == null
+                ? previous.timeSpentMs + elapsed
+                : previous.timeSpentMs,
+            timingStartedAt: null,
+          },
+        };
+      });
+    },
+    [],
+  );
 
   const save = async (
     status: 'in_progress' | 'completed',
@@ -563,11 +656,11 @@ export function StudyApp() {
         automationLevel: step.automationLevel || null,
         answer: answer.value,
         unclear: answer.unclear,
-        timeSpentMs: answer.firstInteractionMs ?? now - stepStartedAt,
+        timeSpentMs: answer.timeSpentMs,
         firstInteractionMs: answer.firstInteractionMs,
         answerChanges: answer.answerChanges,
         voiceUsed: answer.voiceUsed,
-        blurCount,
+        blurCount: answer.blurCount,
         hesitationFlag: Boolean(
           answer.unclear ||
           (answer.firstInteractionMs && answer.firstInteractionMs > 30000) ||
@@ -623,7 +716,6 @@ export function StudyApp() {
     setShowConsent(false);
     setError('');
     setStudyStartedAt(now);
-    setStepStartedAt(now);
   };
 
   const next = async () => {
@@ -640,13 +732,15 @@ export function StudyApp() {
     const done = stepIndex === STEPS.length - 1;
     if (!(await save(done ? 'completed' : 'in_progress', stepIndex + 1)))
       return;
-    setAnswerHistory((history) => ({ ...history, [step.id]: answers }));
+    setAnswerHistory((history) => ({
+      ...history,
+      [step.id]: pauseAnswerTimers(answers),
+    }));
     if (done) setFinished(true);
     else {
       setStepIndex((i) => i + 1);
       setAnswers(answerHistory[STEPS[stepIndex + 1].id] || {});
-      setBlurCount(0);
-      setStepStartedAt(Date.now());
+      visibleQuestionIds.current.clear();
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   };
@@ -717,6 +811,7 @@ export function StudyApp() {
             number={index + 1}
             answer={answers[question.id] || emptyAnswer()}
             update={(value) => updateAnswer(question.id, value)}
+            onVisibilityChange={updateQuestionVisibility}
             speak={speak}
             speechLang={city === 'NB' ? 'zh-CN' : 'zh-HK'}
           />
@@ -737,11 +832,11 @@ export function StudyApp() {
               const previousIndex = stepIndex - 1;
               setAnswerHistory((history) => ({
                 ...history,
-                [step.id]: answers,
+                [step.id]: pauseAnswerTimers(answers),
               }));
               setStepIndex(previousIndex);
               setAnswers(answerHistory[STEPS[previousIndex].id] || {});
-              setStepStartedAt(Date.now());
+              visibleQuestionIds.current.clear();
             }}
           >
             <ArrowLeft /> 上一步 Back
@@ -1018,6 +1113,7 @@ function QuestionBlock({
   number,
   answer,
   update,
+  onVisibilityChange,
   speak,
   speechLang,
 }: {
@@ -1025,12 +1121,34 @@ function QuestionBlock({
   number: number;
   answer: Answer;
   update: (v: Partial<Answer>) => void;
+  onVisibilityChange: (id: string, visible: boolean) => void;
   speak: (v: string) => void;
   speechLang: string;
 }) {
   const selected = answer.value ? answer.value.split(' | ') : [];
+  const fieldsetRef = useRef<HTMLFieldSetElement>(null);
+
+  useEffect(() => {
+    const element = fieldsetRef.current;
+    if (!element) return;
+    if (!('IntersectionObserver' in window)) {
+      onVisibilityChange(question.id, true);
+      return () => onVisibilityChange(question.id, false);
+    }
+    const observer = new IntersectionObserver(
+      ([entry]) => onVisibilityChange(question.id, entry.isIntersecting),
+      { threshold: 0.15 },
+    );
+    observer.observe(element);
+    return () => {
+      observer.disconnect();
+      onVisibilityChange(question.id, false);
+    };
+  }, [onVisibilityChange, question.id]);
+
   return (
     <fieldset
+      ref={fieldsetRef}
       className={`rounded-2xl border p-5 sm:p-6 ${answer.unclear ? 'border-amber-400 bg-amber-50/60' : 'bg-white'}`}
     >
       <legend className="sr-only">{question.zh}</legend>
