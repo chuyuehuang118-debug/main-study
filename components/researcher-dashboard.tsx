@@ -64,6 +64,7 @@ type DetailRow = {
   voiceUsed: boolean;
   blurCount: number;
   hesitationFlag: boolean;
+  hesitationReasons: string[];
 };
 
 export function ResearcherDashboard() {
@@ -257,7 +258,7 @@ export function ResearcherDashboard() {
             icon={<TriangleAlert />}
             label="犹豫标记 Hesitation"
             value={summary.hesitationFlags}
-            note=">30s / changed / unclear"
+            note="≥30s / ≥2 changes / unclear"
           />
           <Metric
             icon={<Mic />}
@@ -406,6 +407,16 @@ export function ResearcherDashboard() {
               </Button>
             </CardHeader>
             <CardContent>
+              <div className="mb-5 rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm leading-6 text-sky-950">
+                <p className="font-semibold">逐题计时口径 Timing definition</p>
+                <p>
+                  Answer time records the active visible time from when a
+                  question appears to the participant’s last response action.
+                  First action is the delay before the first response. These
+                  values support coding but do not by themselves prove
+                  hesitation.
+                </p>
+              </div>
               {detail.consent && (
                 <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/20 bg-primary/5 p-4">
                   <div>
@@ -431,18 +442,19 @@ export function ResearcherDashboard() {
                 </div>
               )}
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[850px] text-left text-sm">
+                <table className="w-full min-w-[1100px] text-left text-sm">
                   <thead className="border-y bg-muted/60">
                     <tr>
                       {[
                         'Question',
                         'Answer',
-                        'Time',
-                        'First action',
+                        'Answer time',
+                        'First action delay',
                         'Changes',
+                        'Page leaves',
                         'Unclear',
                         'Voice',
-                        'Hesitation',
+                        'Possible hesitation',
                       ].map((h) => (
                         <th key={h} className="px-3 py-3">
                           {h}
@@ -468,6 +480,7 @@ export function ResearcherDashboard() {
                             : formatTime(row.firstInteractionMs)}
                         </td>
                         <td className="px-3 py-3">{row.answerChanges}</td>
+                        <td className="px-3 py-3">{row.blurCount}</td>
                         <td className="px-3 py-3">
                           {row.unclear ? 'Yes' : '—'}
                         </td>
@@ -476,7 +489,12 @@ export function ResearcherDashboard() {
                         </td>
                         <td className="px-3 py-3">
                           {row.hesitationFlag ? (
-                            <Badge variant="secondary">Flag</Badge>
+                            <div className="space-y-1">
+                              <Badge variant="secondary">Review</Badge>
+                              <p className="max-w-48 text-xs text-muted-foreground">
+                                {row.hesitationReasons.join(', ')}
+                              </p>
+                            </div>
                           ) : (
                             '—'
                           )}
