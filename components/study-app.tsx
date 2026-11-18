@@ -368,7 +368,7 @@ const STEPS: Step[] = [
       '请查看场景，并想象车辆需要快速识别行人、减速和清楚说明它正在做什么。',
     introEn:
       'Imagine the vehicle must quickly detect the pedestrian, slow down and clearly explain its action.',
-    image: '/scenarios/pedestrian-comparison.png',
+    image: '/scenarios/pedestrian-comparison-v2.png',
     imageAlt: 'Pedestrian crossing scenario',
     scenarioCode: 'pedestrian',
     questions: scenarioQuestions('pedestrian'),
@@ -381,7 +381,7 @@ const STEPS: Step[] = [
       '请想象暴雨影响传感器和视线。车辆可能减速、请求接管或寻找安全位置停车。',
     introEn:
       'Imagine heavy rain affects sensors and visibility. The vehicle may slow down, request a takeover or find a safe place to stop.',
-    image: '/scenarios/heavy-rain-comparison.png',
+    image: '/scenarios/heavy-rain-comparison-v2.png',
     imageAlt: 'Heavy rain driving scenario',
     scenarioCode: 'heavy_rain',
     questions: scenarioQuestions('heavy_rain'),
