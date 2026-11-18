@@ -11,7 +11,8 @@ import {
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { apiUrl, assetUrl } from '@/lib/runtime-url';
+import { ReliableSaveState, saveConsentReliably } from '@/lib/reliable-submit';
+import { assetUrl } from '@/lib/runtime-url';
 
 type Language = 'zh' | 'en';
 
@@ -45,6 +46,7 @@ type ConsentFormProps = {
   city: string;
   submissionId: string;
   onBack: () => void;
+  onPending: () => void;
   onSigned: () => void;
   speak: (value: string) => void;
 };
@@ -54,6 +56,7 @@ export function ConsentForm({
   city,
   submissionId,
   onBack,
+  onPending,
   onSigned,
   speak,
 }: ConsentFormProps) {
@@ -62,9 +65,11 @@ export function ConsentForm({
   const [printName, setPrintName] = useState('');
   const [hasSignature, setHasSignature] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [saveState, setSaveState] = useState<ReliableSaveState | null>(null);
   const [error, setError] = useState('');
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const drawing = useRef(false);
+  const downloadedSubmission = useRef<string | null>(null);
   const statements =
     language === 'zh' ? CHINESE_STATEMENTS : ENGLISH_STATEMENTS;
 
@@ -207,6 +212,7 @@ export function ConsentForm({
     }
 
     setSaving(true);
+    setSaveState(null);
     setError('');
     try {
       const signedAt = new Date();
@@ -215,31 +221,37 @@ export function ConsentForm({
         type: 'application/pdf',
       });
       const fileName = `${participantCode.trim().toUpperCase()}-consent-${language}-${signedAt.toLocaleDateString('en-CA')}.pdf`;
-      const form = new FormData();
-      form.append('file', blob, fileName);
-      form.append('submissionId', submissionId);
-      form.append('participantCode', participantCode.trim().toUpperCase());
-      form.append('city', city);
-      form.append('language', language);
-      form.append('signedAt', signedAt.toISOString());
-      const response = await fetch(apiUrl('/api/consent'), {
-        method: 'POST',
-        body: form,
-      });
-      if (!response.ok) throw new Error('Unable to save consent');
+      if (downloadedSubmission.current !== submissionId) {
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = fileName;
+        anchor.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        downloadedSubmission.current = submissionId;
+      }
 
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = fileName;
-      anchor.click();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      await saveConsentReliably(
+        {
+          submissionId,
+          participantCode: participantCode.trim().toUpperCase(),
+          city,
+          language,
+          signedAt: signedAt.toISOString(),
+          fileName,
+          file: blob,
+        },
+        (state) => {
+          setSaveState(state);
+          if (state === 'stored_on_device') onPending();
+        },
+      );
       onSigned();
     } catch {
       setError(
         language === 'zh'
-          ? '暂时无法保存知情同意书，请检查网络后重试。'
-          : 'Unable to save the consent form. Please check the connection and try again.',
+          ? 'PDF 已暂存在此设备，但服务器尚未确认收到。请保持本页开启、检查网络后再次点击提交。'
+          : 'The PDF is temporarily protected on this device, but the server has not confirmed receipt. Keep this page open, check the connection, and submit again.',
       );
     } finally {
       setSaving(false);
@@ -443,6 +455,20 @@ export function ConsentForm({
             ? '签名 PDF 会与问卷回答分开保存。提交后，您的设备也会下载一份副本。'
             : 'The signed PDF is stored separately from questionnaire responses. A copy will also download to this device after submission.'}
         </section>
+        {saveState && (
+          <output
+            className={`rounded-xl p-4 text-sm font-medium ${saveState === 'confirmed' ? 'bg-emerald-50 text-emerald-900' : 'bg-blue-50 text-blue-900'}`}
+          >
+            {saveState === 'stored_on_device' &&
+              '已在此设备暂存 · Temporarily saved on this device'}
+            {saveState === 'uploading' &&
+              '正在上传到研究数据库 · Uploading to the research database'}
+            {saveState === 'retrying' &&
+              '连接不稳定，正在自动重试 · Connection unstable; retrying automatically'}
+            {saveState === 'confirmed' &&
+              '服务器已确认收到 · Receipt confirmed by the server'}
+          </output>
+        )}
         {error && (
           <p
             role="alert"

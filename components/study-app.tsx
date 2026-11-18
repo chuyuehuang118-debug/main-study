@@ -20,7 +20,15 @@ import { Input } from '@/components/ui/input';
 import { Progress, ProgressLabel } from '@/components/ui/progress';
 import { Textarea } from '@/components/ui/textarea';
 import { ConsentForm } from '@/components/consent-form';
-import { apiUrl, assetUrl } from '@/lib/runtime-url';
+import {
+  ReliableSaveState,
+  deleteStudyDraft,
+  loadStudyDraft,
+  retryPendingSaves,
+  saveStudyDraft,
+  saveSubmissionReliably,
+} from '@/lib/reliable-submit';
+import { assetUrl } from '@/lib/runtime-url';
 
 type Answer = {
   value: string;
@@ -480,11 +488,114 @@ export function StudyApp() {
   );
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [saveState, setSaveState] = useState<ReliableSaveState | null>(null);
   const [finished, setFinished] = useState(false);
   const [error, setError] = useState('');
-  const [submissionId] = useState(() => crypto.randomUUID());
+  const [submissionId, setSubmissionId] = useState(() => crypto.randomUUID());
   const [studyStartedAt, setStudyStartedAt] = useState(() => Date.now());
+  const [consentPending, setConsentPending] = useState(false);
+  const [draftReady, setDraftReady] = useState(false);
+  const [recoveryMessage, setRecoveryMessage] = useState('');
   const visibleQuestionIds = useRef(new Set<string>());
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const restoreAndRetry = async () => {
+      try {
+        const draft = await loadStudyDraft();
+        const freshDraft =
+          draft && Date.now() - draft.updatedAt < 7 * 24 * 60 * 60 * 1000
+            ? draft
+            : null;
+        if (draft && !freshDraft) await deleteStudyDraft();
+        if (freshDraft && !cancelled) {
+          setSubmissionId(freshDraft.submissionId);
+          setParticipantCode(freshDraft.participantCode);
+          setCity(freshDraft.city);
+          setConsent(freshDraft.consent);
+          setConsentPending(freshDraft.consentPending);
+          setStarted(freshDraft.started);
+          setShowConsent(freshDraft.showConsent);
+          setStepIndex(freshDraft.stepIndex);
+          setAnswers(pauseAnswerTimers((freshDraft.answers as Answers) || {}));
+          setAnswerHistory(
+            (freshDraft.answerHistory as Record<string, Answers>) || {},
+          );
+          setStudyStartedAt(freshDraft.studyStartedAt);
+          setRecoveryMessage(
+            '已恢复上次未完成的问卷 · The unfinished questionnaire has been restored.',
+          );
+        }
+
+        const retry = await retryPendingSaves();
+        if (cancelled) return;
+        if (
+          freshDraft?.consentPending &&
+          retry.confirmedIds.includes(`consent:${freshDraft.submissionId}`)
+        ) {
+          const now = Date.now();
+          setConsent(true);
+          setConsentPending(false);
+          setStarted(true);
+          setShowConsent(false);
+          setStudyStartedAt(now);
+          setRecoveryMessage(
+            '知情同意书已补传并由服务器确认 · The consent form has been recovered and confirmed by the server.',
+          );
+        } else if (retry.confirmed > 0) {
+          setRecoveryMessage(
+            '先前暂存的数据已补传并由服务器确认 · Previously stored data has been uploaded and confirmed.',
+          );
+        }
+      } finally {
+        if (!cancelled) setDraftReady(true);
+      }
+    };
+
+    void restoreAndRetry();
+    const retryWhenOnline = () => void restoreAndRetry();
+    window.addEventListener('online', retryWhenOnline);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('online', retryWhenOnline);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!draftReady || finished || (!started && !showConsent)) return;
+    const timeout = window.setTimeout(() => {
+      void saveStudyDraft({
+        submissionId,
+        participantCode,
+        city,
+        consent,
+        consentPending,
+        started,
+        showConsent,
+        stepIndex,
+        answers: pauseAnswerTimers(answers),
+        answerHistory,
+        studyStartedAt,
+        updatedAt: Date.now(),
+      });
+    }, 250);
+    return () => window.clearTimeout(timeout);
+  }, [
+    answerHistory,
+    answers,
+    city,
+    consent,
+    consentPending,
+    draftReady,
+    finished,
+    participantCode,
+    showConsent,
+    started,
+    stepIndex,
+    studyStartedAt,
+    submissionId,
+  ]);
 
   useEffect(() => {
     const onVisibilityChange = () => {
@@ -598,6 +709,7 @@ export function StudyApp() {
 
   const updateAnswer = (id: string, value: Partial<Answer>) => {
     setSaved(false);
+    setSaveState(null);
     setAnswers((current) => ({
       ...current,
       [id]: applyAnswerUpdate(current[id] || emptyAnswer(), value),
@@ -669,10 +781,8 @@ export function StudyApp() {
       }),
     );
     try {
-      const response = await fetch(apiUrl('/api/submissions'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      await saveSubmissionReliably(
+        {
           id: submissionId,
           participantCode: participantCode.trim().toUpperCase(),
           city,
@@ -683,14 +793,14 @@ export function StudyApp() {
           completedAt: status === 'completed' ? new Date().toISOString() : null,
           totalDurationMs: now - studyStartedAt,
           responses: responseRows,
-        }),
-      });
-      if (!response.ok) throw new Error('save failed');
+        },
+        (state) => setSaveState(state),
+      );
       setSaved(true);
       return true;
     } catch {
       setError(
-        '暂时无法保存，请检查网络后重试。Unable to save. Please check the connection and try again.',
+        '回答已暂存在此设备，但服务器尚未确认收到。请保持本页开启、检查网络后再次点击。Answers are protected on this device, but the server has not confirmed receipt. Keep this page open, check the connection, and try again.',
       );
       return false;
     } finally {
@@ -706,12 +816,14 @@ export function StudyApp() {
       return;
     }
     setShowConsent(true);
+    setConsentPending(false);
     setError('');
   };
 
   const completeConsent = () => {
     const now = Date.now();
     setConsent(true);
+    setConsentPending(false);
     setStarted(true);
     setShowConsent(false);
     setError('');
@@ -736,8 +848,10 @@ export function StudyApp() {
       ...history,
       [step.id]: pauseAnswerTimers(answers),
     }));
-    if (done) setFinished(true);
-    else {
+    if (done) {
+      await deleteStudyDraft();
+      setFinished(true);
+    } else {
       setStepIndex((i) => i + 1);
       setAnswers(answerHistory[STEPS[stepIndex + 1].id] || {});
       visibleQuestionIds.current.clear();
@@ -753,6 +867,7 @@ export function StudyApp() {
         city={city}
         submissionId={submissionId}
         onBack={() => setShowConsent(false)}
+        onPending={() => setConsentPending(true)}
         onSigned={completeConsent}
         speak={speak}
       />
@@ -842,9 +957,22 @@ export function StudyApp() {
             <ArrowLeft /> 上一步 Back
           </Button>
           <div className="flex items-center gap-3">
-            {saved && (
+            {saveState === 'stored_on_device' && (
+              <span className="text-sm text-blue-800">
+                设备暂存 · On-device copy
+              </span>
+            )}
+            {saveState === 'retrying' && (
+              <span className="text-sm text-amber-800">
+                自动重试 · Retrying
+              </span>
+            )}
+            {(saveState === 'uploading' || saving) && !saved && (
+              <span className="text-sm text-blue-800">上传中 · Uploading</span>
+            )}
+            {saved && saveState === 'confirmed' && (
               <span className="flex items-center gap-1 text-sm text-primary">
-                <Check className="size-4" /> 已保存 Saved
+                <Check className="size-4" /> 服务器已确认 Server confirmed
               </span>
             )}
             <Button
@@ -877,7 +1005,14 @@ export function StudyApp() {
       <Header />
       <div className="mx-auto grid max-w-6xl gap-8 px-4 py-7 sm:px-8 lg:grid-cols-[230px_minmax(0,1fr)] lg:py-10">
         <Aside started={started} stepIndex={stepIndex} signing={showConsent} />
-        {content}
+        <div className="space-y-4">
+          {recoveryMessage && (
+            <p className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-900">
+              {recoveryMessage}
+            </p>
+          )}
+          {content}
+        </div>
       </div>
     </main>
   );

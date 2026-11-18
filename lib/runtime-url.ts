@@ -1,7 +1,9 @@
 const GITHUB_PAGES_HOST = 'chuyuehuang118-debug.github.io';
 const GITHUB_PAGES_BASE = '/main-study';
-const DATA_BACKEND =
-  'https://av-main-study-questionnaire.chuyuehuang118.chatgpt.site';
+const DATA_BACKEND = (
+  import.meta.env.VITE_DATA_BACKEND ||
+  'https://jutwnwxspgzenyjxdfeb.supabase.co/functions/v1/study-api'
+).replace(/\/+$/, '');
 
 function isGitHubPages() {
   return (
